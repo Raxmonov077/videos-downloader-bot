@@ -1,4 +1,5 @@
 import os
+import re
 import telebot
 import yt_dlp
 from threading import Thread
@@ -17,30 +18,39 @@ def run_dummy_server():
 Thread(target=run_dummy_server, daemon=True).start()
 # --------------------------------------------------------
 
-# Telegram bot tokenini o'rnatamiz
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Yuklash sozlamalari (Cookies ulangan va format eng yaxshisiga sozlangan)
+# Barqaror yuklash sozlamalari
 ydl_opts = {
     'noplaylist': True,
     'cookiefile': 'cookies.txt',
-    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',  # Eng yaxshi sifatni avtomatik birlashtiradi
+    'format': 'best',  # Format xatoliklari chiqmasligi uchun eng universal rejim
     'outtmpl': 'downloads/%(id)s.%(ext)s',
-    'merge_output_format': 'mp4'  # Yakuniy format har doim MP4 bo'ladi
 }
+
+# Matn ichidan linkni ajratib olish funksiyasi
+def extract_url(text):
+    urls = re.findall(r'(https?://[^\s]+)', text)
+    return urls[0] if urls else None
 
 @bot.message_handler(commands=['start'])
 def welcome(message):
     bot.reply_to(
         message, 
-        "👋 Salom! Men orqali YouTube va Instagram-dan videolarni daxshatli tez yuklab olishingiz mumkin.\n"
-        "Menga shunchaki video havolasini (linkini) yuboring!"
+        "👋 Salom! Men orqali YouTube va Instagram-dan videolarni muammosiz yuklab olishingiz mumkin.\n"
+        "Menga video havolasi bor istalgan matnni yuborishingiz mumkin!"
     )
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
-    url = message.text
+    # Matn ichidan havolani qidirib topamiz
+    url = extract_url(message.text)
+    
+    if not url:
+        bot.reply_to(message, "⚠️ Iltimos, xabarda to'g'ri havola (link) borligini tekshiring.")
+        return
+
     if "youtube.com" in url or "youtu.be" in url or "instagram.com" in url:
         msg = bot.reply_to(message, "📥 Video aniqlanmoqda va serverga yuklanmoqda... Iltimos kuting...")
         
@@ -49,18 +59,19 @@ def handle_link(message):
                 info = ydl.extract_info(url, download=True)
                 filename = ydl.prepare_filename(info)
                 
-                # Agar fayl formati o'zgargan bo'lsa (mkv o'rniga mp4 qilingan bo'lsa), haqiqiy nomini tekshiramiz
+                # Agar kengaytma o'zgargan bo'lsa tekshiramiz
                 if not os.path.exists(filename):
                     base, _ = os.path.splitext(filename)
-                    filename = base + ".mp4"
+                    for ext in ['mp4', 'mkv', 'webm', '3gp']:
+                        if os.path.exists(f"{base}.{ext}"):
+                            filename = f"{base}.{ext}"
+                            break
                 
                 bot.edit_message_text("🚀 Server videoni tayyorladi! Telegram'ga yuborilmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
                 
-                # Videoni Telegram'ga yuboramiz
                 with open(filename, 'rb') as video:
-                    bot.send_video(message.chat.id, video, caption="✨ Botingiz orqali daxshatli tezlikda yuklab olindi!")
+                    bot.send_video(message.chat.id, video, caption="✨ Botingiz orqali muvaffaqiyatli yuklab olindi!")
                 
-                # Serverda joy qolishi uchun faylni o'chiramiz
                 if os.path.exists(filename):
                     os.remove(filename)
                 
@@ -69,7 +80,7 @@ def handle_link(message):
         except Exception as e:
             bot.edit_message_text(f"❌ Xatolik yuz berdi: {str(e)}", chat_id=message.chat.id, message_id=msg.message_id)
     else:
-        bot.reply_to(message, "⚠️ Iltimos, faqat to'g'ri YouTube yoki Instagram havolasini yuboring.")
+        bot.reply_to(message, "⚠️ Kechirasiz, hozircha faqat YouTube va Instagram havolalarini qo'llab-quvvatlayman.")
 
 if __name__ == "__main__":
     print("Bot muvaffaqiyatli ishga tushdi...")
