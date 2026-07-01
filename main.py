@@ -6,30 +6,37 @@ from threading import Thread
 from http.server import SimpleHTTPRequestHandler
 from socketserver import TCPServer
 
-# --- RENDER TEKIN TARIFI UCHUN SOXTA PORT OCHISH ---
+# --- RENDER UCHUN MAJBURIY SOXTA PORT ---
 def run_dummy_server():
     port = int(os.environ.get("PORT", 10000))
     handler = SimpleHTTPRequestHandler
     TCPServer.allow_reuse_address = True
-    with TCPServer(("", port), handler) as httpd:
-        print(f"Soxta server {port}-portda ishlamoqda...")
-        httpd.serve_forever()
+    try:
+        with TCPServer(("", port), handler) as httpd:
+            print(f"Soxta server {port}-portda faol.")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"Server xatosi: {e}")
 
 Thread(target=run_dummy_server, daemon=True).start()
-# --------------------------------------------------------
+# ---------------------------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-bot = telebot.TeleBot(BOT_TOKEN)
+# Ziddiyatlarni (Conflict) oldini olish uchun eski webhooklarni tozalab ulanamiz
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+bot.remove_webhook()
 
-# Barqaror yuklash sozlamalari
+# Barcha platformalar uchun eng universal va barqaror yuklash sozlamalari
 ydl_opts = {
     'noplaylist': True,
     'cookiefile': 'cookies.txt',
-    'format': 'best',  # Format xatoliklari chiqmasligi uchun eng universal rejim
+    'format': 'best',  # Sifat muammolarini chetlab o'tish uchun
     'outtmpl': 'downloads/%(id)s.%(ext)s',
+    'quiet': True,
+    'no_warnings': True
 }
 
-# Matn ichidan linkni ajratib olish funksiyasi
+# Uzun matn (ichida heshteg, emoji bo'lsa ham) ichidan toza havolani ajratib olish
 def extract_url(text):
     urls = re.findall(r'(https?://[^\s]+)', text)
     return urls[0] if urls else None
@@ -38,50 +45,47 @@ def extract_url(text):
 def welcome(message):
     bot.reply_to(
         message, 
-        "👋 Salom! Men orqali YouTube va Instagram-dan videolarni muammosiz yuklab olishingiz mumkin.\n"
-        "Menga video havolasi bor istalgan matnni yuborishingiz mumkin!"
+        "👋 Salom! Men orqali YouTube, Instagram va TikTok-dan videolarni muammosiz yuklab olasiz.\n"
+        "Menga video havolasi (linki) bor istalgan matnni yuboring, heshteglar xalaqit bermaydi!"
     )
 
 @bot.message_handler(func=lambda message: True)
 def handle_link(message):
-    # Matn ichidan havolani qidirib topamiz
     url = extract_url(message.text)
     
     if not url:
-        bot.reply_to(message, "⚠️ Iltimos, xabarda to'g'ri havola (link) borligini tekshiring.")
+        bot.reply_to(message, "⚠️ Kechirasiz, bu matn ichida hech qanday video havola topilmadi.")
         return
 
-    if "youtube.com" in url or "youtu.be" in url or "instagram.com" in url:
-        msg = bot.reply_to(message, "📥 Video aniqlanmoqda va serverga yuklanmoqda... Iltimos kuting...")
-        
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
+    msg = bot.reply_to(message, "📥 Video aniqlanmoqda va yuklanmoqda... Iltimos kuting...")
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            
+            # Fayl kengaytmasini aniqlashtiramiz
+            if not os.path.exists(filename):
+                base, _ = os.path.splitext(filename)
+                for ext in ['mp4', 'mkv', 'webm', '3gp', 'm4a']:
+                    if os.path.exists(f"{base}.{ext}"):
+                        filename = f"{base}.{ext}"
+                        break
+            
+            bot.edit_message_text("🚀 Video tayyor! Telegram'ga yuborilmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
+            
+            with open(filename, 'rb') as video:
+                bot.send_video(message.chat.id, video, caption="✨ Videongiz muvaffaqiyatli yuklab olindi!")
+            
+            if os.path.exists(filename):
+                os.remove(filename)
+            
+            bot.delete_message(message.chat.id, msg.message_id)
                 
-                # Agar kengaytma o'zgargan bo'lsa tekshiramiz
-                if not os.path.exists(filename):
-                    base, _ = os.path.splitext(filename)
-                    for ext in ['mp4', 'mkv', 'webm', '3gp']:
-                        if os.path.exists(f"{base}.{ext}"):
-                            filename = f"{base}.{ext}"
-                            break
-                
-                bot.edit_message_text("🚀 Server videoni tayyorladi! Telegram'ga yuborilmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
-                
-                with open(filename, 'rb') as video:
-                    bot.send_video(message.chat.id, video, caption="✨ Botingiz orqali muvaffaqiyatli yuklab olindi!")
-                
-                if os.path.exists(filename):
-                    os.remove(filename)
-                
-                bot.delete_message(message.chat.id, msg.message_id)
-                    
-        except Exception as e:
-            bot.edit_message_text(f"❌ Xatolik yuz berdi: {str(e)}", chat_id=message.chat.id, message_id=msg.message_id)
-    else:
-        bot.reply_to(message, "⚠️ Kechirasiz, hozircha faqat YouTube va Instagram havolalarini qo'llab-quvvatlayman.")
+    except Exception as e:
+        bot.edit_message_text(f"❌ Yuklashda xatolik: Video juda katta bo'lishi mumkin yoki platforma blokladi.", chat_id=message.chat.id, message_id=msg.message_id)
+        print(f"Xatolik tafsiloti: {str(e)}")
 
 if __name__ == "__main__":
     print("Bot muvaffaqiyatli ishga tushdi...")
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True) # Eski kelib qolib ketgan xabarlarni tashlab yuboradi
