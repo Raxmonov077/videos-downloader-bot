@@ -2,6 +2,24 @@ import os
 import telebot
 import yt_dlp
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from threading import Thread
+from http.server import SimpleHTTPRequestHandler
+from socketserver import TCPServer
+
+# --- RENDER TEKIN TARIFI UCHUN SOXTA PORT OCHISH (ALDASh) ---
+def run_dummy_server():
+    # Render avtomatik beradigan PORT yoki 10000-portni oladi
+    port = int(os.environ.get("PORT", 10000))
+    handler = SimpleHTTPRequestHandler
+    # Port band bo'lib qolmasligi uchun sharoit yaratamiz
+    TCPServer.allow_reuse_address = True
+    with TCPServer(("", port), handler) as httpd:
+        print(f"Soxta server {port}-portda ishlamoqda...")
+        httpd.serve_forever()
+
+# Serverni alohida fonda ishga tushiramiz
+Thread(target=run_dummy_server, daemon=True).start()
+# --------------------------------------------------------
 
 # Telegram bot tokenini o'rnatamiz
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -10,7 +28,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # Yuklash sozlamalari (Cookies ulangan holatda)
 ydl_opts = {
     'noplaylist': True,
-    'cookiefile': 'cookies.txt'  # Biz yuklagan faylni o'qiydi
+    'cookiefile': 'cookies.txt'
 }
 
 @bot.message_handler(commands=['start'])
@@ -33,19 +51,15 @@ def handle_link(message):
                 formats = info.get('formats', [])
                 video_title = info.get('title', 'Video')
                 
-                # Sifat tugmalarini yaratamiz
                 markup = InlineKeyboardMarkup()
                 seen_resolutions = set()
                 
                 for f in formats:
-                    # Faqat video va audio birga bo'lgan hamda aniq ruxsatga ega formatlarni olamiz
                     if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('resolution'):
                         res = f.get('resolution')
                         if res not in seen_resolutions:
                             seen_resolutions.add(res)
-                            # Tugmaga format IDsi va url manzilini bog'laymiz
                             callback_data = f"dl|{f.get('format_id')}|{url}"
-                            # Callback data uzunligi 64 belgidan oshib ketmasligini tekshiramiz
                             if len(callback_data) <= 64:
                                 markup.add(InlineKeyboardButton(text=f"🎬 Yuklash ({res})", callback_data=callback_data))
                 
@@ -58,7 +72,6 @@ def handle_link(message):
                         parse_mode="Markdown"
                     )
                 else:
-                    # Agar tayyor format topilmasa, to'g'ridan-to'g'ri eng yaxshisini yuklab yuborish
                     bot.edit_message_text("📥 Video yuklanmoqda...", chat_id=message.chat.id, message_id=msg.message_id)
                     download_and_send(message.chat.id, url, 'best')
                     bot.delete_message(message.chat.id, msg.message_id)
@@ -73,7 +86,6 @@ def handle_download_callback(call):
     bot.answer_callback_query(call.id, "Yuklash boshlandi...")
     _, format_id, url = call.data.split('|')
     
-    # Yuklash xabarini yuborish
     msg = bot.send_message(call.message.chat.id, "📥 Server videoni tayyorlamoqda, hozir yuboraman...")
     
     try:
@@ -91,11 +103,9 @@ def download_and_send(chat_id, url, format_id):
         info = ydl.extract_info(url, download=True)
         filename = ydl.prepare_filename(info)
         
-        # Videoni Telegram'ga yuboramiz
         with open(filename, 'rb') as video:
             bot.send_video(chat_id, video, caption="✨ Botingiz orqali daxshatli tezlikda yuklab olindi!")
         
-        # Serverda joy qolishi uchun faylni o'chiramiz
         if os.path.exists(filename):
             os.remove(filename)
 
